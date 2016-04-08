@@ -29,35 +29,45 @@
 var ub_layout = (function () {
 
 var HorizontalScroll = false;		// true if there is a horizontal scroll bar
+var loadPrevious;			// previous window.load function
 var ReservedHeight = 0;			// reserved pixels at the bottom of the screen
 var ReservedWidth = 0;			// reserved pixels on the right hand side of the screen
+var timeOut = null;			// make sure we don't refresh screen too often
 var ubScrollBarWidth = 0;		// detected scrollbar width
 var winHeight = 0;			// available viewport height
 var winWidth = 0;			// available viewport width
 
-// init - initialisation
+// object scroll height and width fixing
 
-var init = function (reservedHeight, reservedWidth) {
-	if (reservedHeight) {ReservedHeight = reservedHeight}
-	if (reservedWidth) {ReservedWidth = reservedWidth}
-
-	if (typeof window.addEventListener == 'function') {
-		window.addEventListener('resize',ub_layout.resize,false);
-	} else if (typeof window.attachEvent == 'function') {
-		window.attachEvent('resize',ub_layout.resize);
-		}
-
+var domFix = function() {
 	getViewportSize();
-	scrollbarWidth();
-	tableInit ();
+	if (winWidth <= 1 || winHeight <= 1) return;
+
+	resizeScrollableTables();
+	for (var child = 0; child < document.body.children.length; ++child) domShrink(document.body.children[child]);
+	for (var child = 0; child < document.body.children.length; ++child) domWalk(document.body.children[child]);
 	};
 
-// Limit resize events
+var domShrink = function(node) {
+	var scrollTable = node.classList.contains('scrollTable');
+	var tagName = node.tagName;
 
-var timeOut = null;
-var resize = function(){
-	if(timeOut != null) clearTimeout(timeOut);
-	timeOut = setTimeout(ub_layout.domFix, 300);
+	if (node.hasAttribute('scrollable') || node.classList.contains('scrollable') || scrollTable) {
+		if (tagName != 'TABLE' && !scrollTable) {
+			if (!node.hasAttribute('ubScrollHeight')) node.setAttribute('ubScrollHeight', '100');
+			// IFRAME won't set width to content so set default ubScrollWidth to 100
+			if (tagName == 'IFRAME' && !node.hasAttribute('ubScrollWidth')) node.setAttribute('ubScrollWidth', '100');
+			}
+		if (node.hasAttribute('ubScrollHeight')) {node.ub_css({height: '0px'}); }
+		if (node.hasAttribute('ubScrollWidth') && parseInt(node.getAttribute('ubScrollWidth')) != 0) node.ub_css({width: '0px'});
+		}
+	if (tagName != 'SCRIPT') for (var child = 0; child < node.children.length; ++child) domShrink(node.children[child]);
+	};
+
+var domWalk = function(node) {
+	if (node.hasAttribute('scrollable') || node.classList.contains('scrollable') || node.classList.contains('scrollTable'))
+		nodeFixHeight(node);
+	if (node.tagName != 'SCRIPT') for (var child = 0; child < node.children.length; ++child) domWalk(node.children[child]);
 	};
 
 // getViewportSize - Get the available size in pixels of the viewport
@@ -67,112 +77,100 @@ var getViewportSize = function() {
 	winHeight = window.innerHeight - ReservedHeight - 1 - (HorizontalScroll ? ubScrollBarWidth : 0);
 	};
 
+// init - initialisation
 
-// object scroll height and width fixing
-
-var domFix = function() {
+var init = function () {
+	if (ub_layout.loadPrevious) ub_layout.loadPrevious();
+	window.addEventListener('resize',ub_layout.resize,false);
+	Element.prototype.ub_css = layoutCss;
+	Element.prototype.remove = function() {this.parentElement.removeChild(this);}
 	getViewportSize();
-	if (winWidth <= 1 || winHeight <= 1) return;
-
-	resizeScrollableTables();
-	$('body').children().each(function() { domShrink(this); });
-	$('body').children().each(function() { domWalk(this); });
+	scrollbarWidth();
+	tableInit ();
 	};
 
-var domShrink = function(node) {
-	var tagName = $(node).prop('tagName');
-	if ($(node).is('[scrollable]') || $(node).hasClass('scrollable') || $(node).hasClass('scrollTable')) {
-		if (tagName != 'TABLE' && !$(node).hasClass('scrollTable')) {
-			if (!$(node).attr('ubScrollHeight')) $(node).attr('ubScrollHeight', "100");
-			if (tagName == 'IFRAME' && !$(node).attr('ubScrollWidth')) $(node).attr('ubScrollWidth', "100");
-			}
-		if ($(node).attr('ubScrollHeight')) {$(node).css({'height' : '0px'}); }
-		if ($(node).attr('ubScrollWidth') && parseInt($(node).attr('ubScrollWidth')) != 0) { $(node).css({'width' : '0px'}); }
-		}
-	if (tagName != 'SCRIPT') { $(node).children().each(function() { domShrink(this); })}
-	};
+// reserve - reserve some of the real estate (for message bar etc)
 
-var domWalk = function(node) {
-	var tagName = $(node).prop('tagName');
+var reserve = function (reservedHeight, reservedWidth) {
+	if (reservedHeight) {ReservedHeight = reservedHeight}
+	if (reservedWidth) {ReservedWidth = reservedWidth}
+	}
 
-	if ($(node).is('[scrollable]') || $(node).hasClass('scrollable') || $(node).hasClass('scrollTable')) {
-		nodeFixHeight(node);
-		}
-	if (tagName != 'SCRIPT') { $(node).children().each(function() { domWalk(this); })}
+// Limit resize events
+
+var resize = function(){
+	if(timeOut != null) clearTimeout(timeOut);
+	timeOut = setTimeout(ub_layout.domFix, 300);
 	};
 
 // nodeFixHeight - set height of node to a percentage of remaining viewport height
 
-var nodeFixHeight = function(node) {
-	var height;
-	var width;
-	var offset = $(node).offset();
+var nodeFixHeight = function(domNode) {
+	var height = 0;
+	var width = 0;
+	var offset = $(domNode).offset();
+	var scrollable = domNode.hasAttribute("scrollable") || domNode.classList.contains("scrollable");
+	var scrollTable = domNode.classList.contains('scrollTable');
+
+	if (domNode.getAttribute('ubScrollHeight') !== null) height = parseInt(domNode.getAttribute('ubScrollHeight'));
+	if (domNode.getAttribute('ubScrollWidth') !== null) width = parseInt(domNode.getAttribute('ubScrollWidth'));
 
 	/* this is simple as all we have to do is put up a scroll bar and calculate the height as a percentage of the available height */
-	if ((height = parseInt($(node).attr('ubScrollHeight')))) {
-		if ($(node).is('[scrollable]') || $(node).hasClass('scrollable')) {
-			if ($(node).attr('scrollable') == undefined || $(node).attr('scrollable') == '') {
-				$(node).css({'overflow-y' : 'auto'});
+	if (height) {
+		if (scrollable) {
+			var scrollableValue = domNode.getAttribute('scrollable');
+			if (scrollableValue === null || scrollableValue === '') {
+				domNode.ub_css({overflowY: 'auto'});
 			} else {
-				$(node).css({'overflow-x' : 'auto', 'overflow-y' : 'hidden', 'display' : 'flex', 'flex-direction' : 'row', 'flex-wrap' : 'nowrap'});
+				domNode.ub_css({overflowX: 'auto', overflowY: 'hidden', display: 'flex', flexDirection: 'row', flexWrap: 'nowrap'});
 				}
 			}
 
 		var offsetTop = Math.ceil(offset.top);
 		var newHeight = Math.floor((winHeight - offsetTop) * height / 100) + (HorizontalScroll ? ubScrollBarWidth : 0);
-		newHeight -= Math.ceil($(node).outerHeight(true)) - 1;
+		newHeight -= Math.ceil($(domNode).outerHeight(true)) - 1;
 
 		if (newHeight < 0) newHeight = 0;
-		$(node).height(newHeight);
+		domNode.ub_css({height: newHeight+'px'});
 
 		// if the node has class 'scrollTable' then we have to set the height of the child 'tbody' node
-		if ($(node).hasClass('scrollTable')) {
+		if (scrollTable) {
 			// fix a couple of css attributes
-			$('table', node).css({'margin' : '0px', 'top' : '0px', 'left' : '0px'});
+			var tableParts = domNode.querySelectorAll('table');
+			for (var p = 0; p < tableParts.length; ++p) tableParts[p].ub_css({margin: '0px', top: '0px', left: '0px'});
+
 			// set the height of the thead and tfoot divs to the height of the internal table
 			var tbodyHeight = newHeight - (HorizontalScroll ? ubScrollBarWidth : 0);
 			var tableNode;
-			if ((tableNode = $('[name = "thead"]', node)).length > 0) {
-				tbodyHeight -= $(tableNode).outerHeight();
-				}
-			if ((tableNode = $('[name = "tfoot"]', node)).length > 0) {
-				tbodyHeight -= $(tableNode).outerHeight();
-				}
+			if (tableNode = domNode.querySelector('[name="thead"]')) tbodyHeight -= tableNode.clientHeight;
+			if (tableNode = domNode.querySelector('[name="tfoot"]')) tbodyHeight -= tableNode.clientHeight;
+
 			// now set tbody height if table height > tbodyHeight
 			--tbodyHeight;
 			if (tbodyHeight < 0) tbodyHeight = 0;
-			var currentHeight = $('[name = "tbody"] table', node).outerHeight();
+
+			var currentHeight = domNode.querySelector('[name = "tbody"] table').clientHeight;
 			if (currentHeight < tbodyHeight) tbodyHeight = currentHeight;
-			$('[name = "tbody"]', node).height(tbodyHeight);
+			domNode.querySelector('[name = "tbody"]').ub_css({height: tbodyHeight+'px'});
 			}
 		}
 
 	// ubScrollWidth
-console.info($(node).prop('tagName'));
-	if (!$(node).hasClass('scrollTable')) {
-console.info('not scrollTable');
-		if ((width = parseInt($(node).attr('ubScrollWidth')))) {
-			var newWidth = Math.floor((winWidth - offset.left /* - 1 */) * width / 100);
-			newWidth -= Math.ceil($(node).outerWidth(true)); /* - 1 + ubScrollBarWidth; */
-			$(node).css({'width' : newWidth});
+	if (width) {
+		if (scrollTable) {
+			var table = document.querySelector('[scrollTable="'+domNode.getAttribute('scrollDiv')+'"]');
+			var divWidth = parseInt(table.getAttribute('_ubWidth')) + ubScrollBarWidth;
+
+			// Hide table and display div
+			domNode.ub_css({overflowX: 'auto', width: divWidth+'px'});
+		} else {
+			var newWidth = Math.floor((winWidth - offset.left) * width / 100);
+			newWidth -= Math.ceil($(domNode).outerWidth(true));
+			domNode.ub_css({width: newWidth+'px'});
 			}
-	} else if ($(node).attr('ubScrollWidth') && parseInt($(node).attr('ubScrollWidth')) != 0) {
-console.info('scrollTable');
-		var currentTable = $(node).attr('scrollDiv');
-		table = $('[scrollTable="'+currentTable+'"]');
-
-		var tableWidth = parseInt($(table).attr('_ubWidth'));
-		var divWidth = tableWidth + ubScrollBarWidth;
-console.info('_ubWidth '+$(table).attr('_ubWidth')+' tableWidth '+tableWidth+' divWidth '+divWidth);
-
-		// Hide table and display div
-		$(node).width(divWidth);
-		$(node).css({'overflow-x' : 'auto'});
-		}
-	if ($(node).width() > winWidth) {
-		$(node).width(winWidth);
 		}
 
+	if (domNode.clientWidth > winWidth) domNode.ub_css({width: winWidth+'px'});
 	};
 
 // tableCollapse - Search all the tables for any that have attribute collapseLevel defined on a table row
@@ -180,34 +178,36 @@ console.info('_ubWidth '+$(table).attr('_ubWidth')+' tableWidth '+tableWidth+' d
 
 var tableCollapse = function() {
 
-	/* Search every table */
-	$('table').each(function() {
-		var found = false;
+	for (var collapseTables = document.querySelectorAll('table'), t = 0; t < collapseTables.length; ++t) {
+		if (collapseTables[t].querySelectorAll(':scope > tbody > tr[collapseLevel]').length) {
+			for (var collapseRows = collapseTables[t].querySelectorAll(':scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr'), r = 0; r < collapseRows.length; ++r) {
+				var row = collapseRows[r];
+				var cell = row.children[0];
+				if (!cell.getAttribute('collapseCell')) {
+					var newTD = document.createElement('td');
 
-		/* Search TR nodes for an attribute 'collapseLevel' */
-		$(this).children().children('tr').each(function() { if ($(this).attr('collapseLevel')) { found = true; return false; }});
-
-		/* Add extra column to every row */
-		if (found) {
-			$(this).children().children('tr').each(function() {
-				if ($('[collapsecell]', this).length == 0) {
-					var newTD = $('<td collapseCell="yes"></td>');
-					$(newTD).css({'width' : '1em'});
-					if ($(this).attr('collapseLevel')) {
-						$(newTD).addClass('collapse');
-						$(newTD).attr('onclick', 'ub_layout.trCollapse(event)');
+					newTD.setAttribute('collapseCell', 'yes');
+					newTD.ub_css({maxWidth: '1em', width: '1em'});
+					if (row.getAttribute('collapseLevel')) {
+						newTD.classList.add('collapse');
+						newTD.addEventListener('click', ub_layout.trCollapse, false);
+						newTD.style.cursor = 'pointer';
 
 						/* Add attribute 'collapseState' and give default value 'open'. Other value is 'hide' */
-						if (!$(this).attr('collapseState')) { $(this).attr ('collapseState', 'open'); }
+						if (!row.getAttribute('collapseState')) { row.setAttribute ('collapseState', 'open'); }
 						/* Add attribute 'collapseDirection' and give default value 'after'. Other value is 'before'. */
-						if (!$(this).attr('collapseDirection')) { $(this).attr ('collapseDirection', 'after'); }
-						if ($(this).attr('collapseState') == 'open') { $(newTD).text("-"); } else { $(newTD).text("+"); }
+						if (!row.getAttribute('collapseDirection')) { row.setAttribute ('collapseDirection', 'after'); }
+						if (row.getAttribute('collapseState') == 'open') {
+							newTD.appendChild(document.createTextNode("-"));
+						} else {
+							newTD.appendChild(document.createTextNode("+"));
+							}
 						}
-					$(this).prepend(newTD);
+					collapseRows[r].insertBefore(newTD, collapseRows[r].firstChild);
 					}
-				});
+				}
 			}
-		});
+		}
 	};
 
 // tableInit - initialise tables and fix layout
@@ -216,8 +216,8 @@ var tableInit = function () {
 	tableReverse();
 	removeEmptyRows();
 	tableCollapse();
+	for (var collapse = document.querySelectorAll('tr[collapseState="hide"]'), t = 0; t < collapse.length; ++t) trHide (collapse[t]);
 	wrapScrollableTables();
-	$('tr[collapseState = "hide"]').each(function() {trHide (this, $(this).attr('collapseDirection'))});
 	makeCollapsibleLists();
 	domFix ();
 	};
@@ -244,14 +244,12 @@ var tableReverse = function () {
 
 var trCollapse = function(e) {
 	var tr = e.target.parentNode;
-	var state = tr.getAttribute('collapseState');
-	var direction = tr.getAttribute('collapseDirection');
-	if (state == 'open') {
-		trHide(tr, direction);
+	if (tr.getAttribute('collapseState') == 'open') {
+		trHide(tr);
 		tr.setAttribute('collapseState', 'hide');
 		tr.firstChild.innerHTML = "+";
 	} else {
-		trShow(tr, direction);
+		trShow(tr);
 		tr.setAttribute('collapseState', 'open');
 		tr.firstChild.innerHTML = "-";
 		}
@@ -261,7 +259,9 @@ var trCollapse = function(e) {
 
 // trHide - hide a row
 
-var trHide = function(tr, direction) {
+var trHide = function(tr) {
+	var direction = tr.getAttribute('collapseDirection');
+
 	// walk siblings while collapseLevel >= current level or collapseLevel is missing
 	var done = false;
 	var level = parseInt(tr.getAttribute('collapseLevel'));
@@ -278,7 +278,9 @@ var trHide = function(tr, direction) {
 
 // trShow - show a row
 
-var trShow = function(tr, direction) {
+var trShow = function(tr) {
+	var direction = tr.getAttribute('collapseDirection');
+
 	// walk siblings while collapseLevel >= current level or collapseLevel is missing
 	var level = parseInt(tr.getAttribute('collapseLevel'));
 	var done = false;
@@ -344,44 +346,45 @@ var scrollbarWidth = function() {
 // removeEmptyRows - remove any <tr></tr> combinations from all tables
 
 var removeEmptyRows = function() {
-	$('table').children('thead, tbody, tfoot').children('tr').each(function() {
-		if ($(this).children().length == 0) {
-			// remove empty row
-			$(this).remove();
-			}
-		});
+	var rows = document.querySelectorAll('thead > tr, tbody > tr, tfoot > tr');
+	for (var r = 0; r < rows.length; ++r) {
+		if (rows[r].children.length == 0) rows[r].remove();
+		}
 	};
 
 // scrollTableColumns - return an array that is the widths of the columns
 
+var colWidths = new Array();
+var noOfCols = 0;
+var rowSpans = new Array();
+var rowSpanCols = new Array();
 var scrollTableColumns = function(table) {
-	var colWidths = new Array();
-	var colCurrent = 0;
-	var noOfCols = 0;
-	var rowSpans = new Array();
-	var rowSpanCols = new Array();
 
-	$(table).children('thead, tbody, ttail').children('tr').each(function() {
-		colCurrent = 0;
+	var tr = table.querySelectorAll('tr');
+	var trLength = tr.length;
+
+	for (var r = 0; r < trLength; ++r) {
+		var colCurrent = 0;
 
 		while (colCurrent < noOfCols && rowSpans[colCurrent] > 1) {
 			--rowSpans[colCurrent];
 			colCurrent += rowSpanCols[colCurrent];
 			}
 
-		$(this).children().each(function() {
+		var cells = tr[r].querySelectorAll(':scope > td, :scope > th');
+		var cellLength = cells.length;
 
-			if ($(this).attr('rowspan')) rowSpans[colCurrent] = parseInt($(this).attr('rowspan')); else rowSpans[colCurrent] = 1;
-			if ($(this).attr('colspan')) rowSpanCols[colCurrent] = parseInt($(this).attr('colspan')); else rowSpanCols[colCurrent] = 1;
+		for (var c = 0; c < cellLength; c += rowSpanCols[c]) {
+			var colspan = cells[c].getAttribute('colspan');
+			var rowspan = cells[c].getAttribute('rowspan');
+			rowSpans[c] = rowspan == null ? 1 : parseInt(rowspan);
+			rowSpanCols[c] = colspan == null ? 1 : parseInt(colspan);
 
-			if (rowSpanCols[colCurrent] == 1) {
-				colWidths[colCurrent] = Math.ceil($(this).outerWidth(true));
-				++colCurrent;
-			} else {
-				colCurrent += rowSpanCols[colCurrent];
+			if (rowSpanCols[c] == 1) {
+				thisWidth = cells[c].clientWidth + 1;
+				if (colWidths[c] == undefined || thisWidth > colWidths[c]) colWidths[c] = thisWidth;
 				}
-
-			});
+			}
 
 		noOfCols = colWidths.length;
 
@@ -390,16 +393,14 @@ var scrollTableColumns = function(table) {
 			++colCurrent;
 			}
 
-		var colspanFail = false;
-		if (colWidths.length == 0 || colWidths.length < colCurrent) {
-			colspanFail = true;
-		} else {
-			for (var i = 0 ; i < colWidths.length; ++i) { if (colWidths[i] == undefined) colspanFail = true; }
-			}
-		return colspanFail;
-		});
-
-	if (ubScrollBarWidth == 0) {for (i = 0; i < colCurrent; ++i) {++colWidths[i];}}
+//		var colspanFail = false;
+//		if (colWidths.length == 0 || colWidths.length < colCurrent) {
+//			colspanFail = true;
+//		} else {
+//			for (var i = 0 ; i < colWidths.length; ++i) { if (colWidths[i] == undefined) colspanFail = true; }
+//			}
+//		return colspanFail;
+		}
 
 	return colWidths;
 	};
@@ -419,12 +420,8 @@ var resizeScrollableTables = function() {
 		// Reset scrollDiv width if ubScrollWidth not defined otherwise get width of div to assign to table
 		var ubScrollWidth = $(this).attr('ubScrollWidth');
 		var divWidth = $(this).width();
-		$(this).css({'width': 'auto'});
-		$(this).css({'max-width': 'auto'});
-		$(table).css({'width': 'auto'});
-		$(table).css({'max-width': '100%'});
-		$(this).width('auto');
-		$(table).width('auto');
+		$(this).css({'max-width': 'auto', 'width': 'auto'});
+		$(table).css({'max-width': '100%', 'width': 'auto'});
 
 		// Move table rows from 'new' tables back to original table and hide the 'new' tables
 
@@ -468,15 +465,16 @@ var resizeScrollableTables = function() {
 		// set div width
 
 		// Calculate new column widths and set the widths on the new tables
-		var colWidths = scrollTableColumns(table);
+		var colWidths = scrollTableColumns($(table)[0]);
 		var colCurrent = colWidths.length;
 		var widthSum = 0; for (var i = 0; i < colWidths.length; ++i) widthSum += colWidths[i] + 1;
 		var tableWidth = widthSum;
-		var divWidth = tableWidth + ubScrollBarWidth + 2;
+
+		divWidth = tableWidth + ubScrollBarWidth + 2;
 
 		// Hide table and display div
 		$(table).hide();
-		$(this).css('min-width', divWidth);
+		$(this).css({'min-width': divWidth});
 
 		// Put table rows back in 'new' tables
 		function putBackRows (section, sectionName) {
@@ -564,7 +562,7 @@ var makeScrollableTables = function(context) {
 				}
 
 			// At this time the column widths are correct, so make a note of them
-			var colWidths = scrollTableColumns(table);
+			var colWidths = scrollTableColumns($(table)[0]);
 			var colCurrent = colWidths.length;
 			tableWidth = Math.ceil($(table).outerWidth(true)) + colCurrent;
 
@@ -615,6 +613,28 @@ var makeScrollableTables = function(context) {
 		});
 	};
 
+// print tables for Firefox
+
+var windowPrint = function () {
+        var inlineTables = [ ];
+	for (var tables = document.querySelectorAll('table'), table = 0; table < tables.length; ++table) {
+		if (window.getComputedStyle(tables[table],null).getPropertyValue('display') === 'inline-table') {
+			inlineTables.push(tables[table]);
+			tables[table].style.display = 'table';
+			}
+		}
+        var inlineBlocks = [ ];
+	for (var blocks = document.querySelectorAll('div, fieldset'), block = 0; block < blocks.length; ++block) {
+		if (window.getComputedStyle(blocks[block],null).getPropertyValue('display') === 'inline-block') {
+			inlineBlocks.push(blocks[block]);
+			tables[block].style.display = 'block';
+			}
+		}
+	window.print();
+	while (inlineTables.length) inlineTables.shift().style.display = 'inline-table';
+	while (inlineBlocks.length) inlineBlocks.shift().style.display = 'inline-block';
+	}
+
 // How many scrollable tables are there?
 
 var tableNumber = 0;
@@ -641,7 +661,6 @@ var wrapScrollableTable = function(table) {
 
 	// Try to get correct width for surrounding div
 	$(table).attr('ostyle', $(table).attr('style'));
-console.info('new width '+tableWidth+' '+ubScrollBarWidth);
 	$(newDiv).width(tableWidth + ubScrollBarWidth);
 	if ((value = $(table).attr('ubScrollWidth'))) { $(newDiv).attr('ubScrollWidth', value); }
 
@@ -699,21 +718,32 @@ var showList = function(e) {
 	resize();
 	};
 
+// layoutCss - add css values to an object
+
+var layoutCss = function (style) {
+	var styles = Object.keys(style);
+
+	for (var k = 0; k < styles.length; ++k) this.style[styles[k]] = style[styles[k]];
+	};
+
 // end of ub_layout
 
 	return {
 		init: init,
-		domFix : domFix,
+		domFix: domFix,
+		loadPrevious: loadPrevious,
 		makeScrollableTables: makeScrollableTables,
-		resize : resize,
-		showList : showList,
-		tableCollapse : tableCollapse,
+		reserve: reserve,
+		resize: resize,
+		showList: showList,
+		tableCollapse: tableCollapse,
 		tableInit: tableInit,
-		trCollapse : trCollapse,
-		trHide : trHide,
+		trCollapse: trCollapse,
+		trHide: trHide,
+		windowPrint: windowPrint,
 		wrapScrollableTable: wrapScrollableTable,
 		wrapScrollableTables: wrapScrollableTables
 		};
 	})();
 
-$(window).load(function(){ ub_layout.init(); });
+ub_layout.loadPrevious = window.onload; window.onload = ub_layout.init;
